@@ -14,9 +14,11 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 )
 
 func deriveKey(encryptionKey, diversifier string) ([]byte, error) {
@@ -42,10 +44,22 @@ func encrypt(buf *bytes.Buffer, encryptionKey string, diversifier string, iv int
 	if err != nil {
 		return nil, err
 	}
+	// Create our cypher using the iv
 	ivBytes := make([]byte, aes.BlockSize)
 	binary.BigEndian.PutUint64(ivBytes[8:], uint64(iv))
 	stream := cipher.NewCTR(block, ivBytes)
+	// Actually do the encryption
 	encrypted := make([]byte, buf.Len())
 	stream.XORKeyStream(encrypted, buf.Bytes())
 	return encrypted, nil
+}
+
+func padBuffer(buf *bytes.Buffer, alignmentSize int) {
+	padding := alignmentSize - buf.Len()%alignmentSize
+	_, _ = buf.Write(make([]byte, padding))
+}
+
+func md5Hash(b []byte) string {
+	s := md5.Sum(b)
+	return hex.EncodeToString(s[:])
 }

@@ -351,13 +351,23 @@ func (c *restClient) RegisterBlob(ctx context.Context, req registerBlobRequest) 
 	return
 }
 
+const debugAPICalls = true
+
 func (c *restClient) doPost(ctx context.Context, url string, req any, resp any) (err error) {
 	// TODO: Retries
-	b, err := json.MarshalIndent(req, "", "  ")
+	marshaller := json.Marshal
+	if debugAPICalls {
+		marshaller = func(v any) ([]byte, error) {
+			return json.MarshalIndent(v, "", "  ")
+		}
+	}
+	b, err := marshaller(req)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", b)
+	if debugAPICalls {
+		fmt.Printf("%s\n", b)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("unable to make http request: %w", err)
@@ -383,7 +393,9 @@ func (c *restClient) doPost(ctx context.Context, url string, req any, resp any) 
 	if r.StatusCode != 200 {
 		return fmt.Errorf("non successful status code (%d): %s", r.StatusCode, b)
 	}
-	fmt.Printf("%s\n", b)
+	if debugAPICalls {
+		fmt.Printf("%s\n", b)
+	}
 	err = json.Unmarshal(b, resp)
 	if err != nil {
 		return fmt.Errorf("invalid response: %w, full response: %s", err, b[:min(128, len(b))])

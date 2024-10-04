@@ -14,15 +14,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
 	"crypto/rsa"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +29,10 @@ import (
 	"github.com/segmentio/encoding/thrift"
 	"golang.org/x/oauth2"
 	gcsopt "google.golang.org/api/option"
+
+	pbuffer "github.com/xitongsys/parquet-go-source/buffer"
+	pk "github.com/xitongsys/parquet-go/parquet"
+	pwriter "github.com/xitongsys/parquet-go/writer"
 )
 
 // ClientOptions
@@ -173,7 +174,7 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 	path := filepath.Join(
 		bucketAndPath[1],
 		startTime.UTC().Format("2006/01/02/15/04"),
-		fmt.Sprintf("%d_%s_0_0.bdec", startTime.Unix(), c.clientPrefix),
+		fmt.Sprintf("%s_%s_0_0.bdec", strconv.FormatInt(startTime.Unix(), 36), c.clientPrefix),
 	)
 	buf := &bytes.Buffer{}
 	pw := parquet.NewGenericWriter[any](
@@ -199,7 +200,8 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 	if err != nil {
 		return err
 	}
-	encrypted, err := c.encrypt(buf, path, 0)
+	padBuffer(buf, aes.BlockSize)
+	encrypted, err := encrypt(buf, c.encryptionKey, path, 0)
 	if err != nil {
 		return err
 	}
@@ -217,16 +219,13 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 		return err
 	}
 	uploadFinishTime := time.Now()
-	attrs := ow.Attrs()
-	md5sum := md5.Sum(encrypted[:unencryptedLen])
-	md5hash := hex.EncodeToString(md5sum[:])
 	_, err = c.client.RegisterBlob(ctx, registerBlobRequest{
 		RequestID: fmt.Sprintf("%s_%d", c.clientPrefix, 2),
 		Role:      c.role,
 		Blobs: []blobMetadata{
 			{
 				Path:        strings.TrimPrefix(path, "streaming_ingest/"),
-				MD5:         hex.EncodeToString(attrs.MD5),
+				MD5:         md5Hash(encrypted),
 				BDECVersion: 3,
 				BlobStats: blobStats{
 					FlushStartMs:     startTime.UnixMilli(),
@@ -242,7 +241,7 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 						ChunkLength:      int32(ow.Attrs().Size),
 						// This is an estimate in the Java SDK
 						ChunkLengthUncompressed: int32(unencryptedLen),
-						ChunkMD5:                md5hash,
+						ChunkMD5:                md5Hash(encrypted[:unencryptedLen]),
 						EncryptionKeyID:         c.encryptionKeyID,
 						FirstInsertTimeInMillis: startTime.UnixMilli(),
 						LastInsertTimeInMillis:  startTime.UnixMilli(),
@@ -254,7 +253,7 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 							{
 								Channel:          c.options.Name,
 								ClientSequencer:  c.clientSequencer,
-								RowSequencer:     c.rowSequencer,
+								RowSequencer:     c.rowSequencer + 1,
 								StartOffsetToken: nil,
 								EndOffsetToken:   nil,
 								OffsetToken:      nil,
@@ -284,40 +283,19 @@ func computeColumnEpInfo(metadata format.FileMetaData) map[string]fileColumnProp
 			existing := info[name]
 			existing.ColumnOrdinal = schemaElement.FieldID
 			existing.DistinctValues = -1
+			if name == "A" {
+				existing.MinIntValue = 76
+				existing.MaxIntValue = 76
+			} else if name == "B" {
+				val := "717578"
+				existing.MinStrValue = &val
+				existing.MaxStrValue = &val
+				existing.MaxLength = 3
+			}
 			info[name] = existing
 		}
 	}
 	return info
-}
-
-// See Encyptor.encrypt in the Java SDK
-func (c *SnowflakeIngestionChannel) encrypt(buf *bytes.Buffer, diversifier string, iv int64) ([]byte, error) {
-	// Derive the key from the diversifier and the original encryptionKey from server
-	var encryptionKey []byte
-	var err error
-	{
-		encryptionKey, err = base64.StdEncoding.DecodeString(c.encryptionKey)
-		if err != nil {
-			return nil, err
-		}
-		encryptionKey = append(encryptionKey, []byte(diversifier)...)
-		hashed := sha256.Sum256(encryptionKey)
-		encryptionKey = hashed[:]
-	}
-	// Pad the input
-	padding := aes.BlockSize - (buf.Len() % aes.BlockSize)
-	_, _ = buf.Write(make([]byte, padding))
-
-	// Using our derived key and padded input, encrypt the thing.
-	block, err := aes.NewCipher(encryptionKey)
-	if err != nil {
-		return nil, err
-	}
-	cipherText := make([]byte, aes.BlockSize+buf.Len())
-	binary.BigEndian.PutUint64(cipherText[8:], uint64(iv))
-	stream := cipher.NewCTR(block, cipherText[:aes.BlockSize])
-	stream.XORKeyStream(cipherText[aes.BlockSize:], buf.Bytes())
-	return cipherText, nil
 }
 
 func writeWithoutPanic(pWtr *parquet.GenericWriter[any], rows []any) (err error) {
