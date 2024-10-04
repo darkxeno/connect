@@ -16,7 +16,6 @@ import (
 	"crypto/aes"
 	"crypto/rsa"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -29,10 +28,6 @@ import (
 	"github.com/segmentio/encoding/thrift"
 	"golang.org/x/oauth2"
 	gcsopt "google.golang.org/api/option"
-
-	pbuffer "github.com/xitongsys/parquet-go-source/buffer"
-	pk "github.com/xitongsys/parquet-go/parquet"
-	pwriter "github.com/xitongsys/parquet-go/writer"
 )
 
 // ClientOptions
@@ -74,7 +69,7 @@ func NewSnowflakeServiceClient(ctx context.Context, opts ClientOptions) (*Snowfl
 	}
 	return &SnowflakeServiceClient{
 		client:        client,
-		clientPrefix:  resp.Prefix,
+		clientPrefix:  fmt.Sprintf("%s_%d", resp.Prefix, resp.DeploymentID),
 		deploymentID:  resp.DeploymentID,
 		stageLocation: resp.StageLocation,
 		options:       opts,
@@ -174,7 +169,7 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 	path := filepath.Join(
 		bucketAndPath[1],
 		startTime.UTC().Format("2006/01/02/15/04"),
-		fmt.Sprintf("%s_%s_0_0.bdec", strconv.FormatInt(startTime.Unix(), 36), c.clientPrefix),
+		fmt.Sprintf("%s_%s_34_0.bdec", strconv.FormatInt(startTime.Unix(), 36), c.clientPrefix),
 	)
 	buf := &bytes.Buffer{}
 	pw := parquet.NewGenericWriter[any](
