@@ -35,6 +35,7 @@ func TestSnowflake(t *testing.T) {
 		PrivateKey: parseResult.(*rsa.PrivateKey),
 	})
 	require.NoError(t, err)
+	defer client.Close()
 	channel, err := client.OpenChannel(ctx, streaming.ChannelOptions{
 		Name:         "my_first_testing_channel",
 		DatabaseName: "BABY_DATABASE",
@@ -46,7 +47,5 @@ func TestSnowflake(t *testing.T) {
 		map[string]any{"A": 42, "B": "foo", "C": false},
 		map[string]any{"A": 33, "B": "solid", "C": true},
 	})
-	require.NoError(t, err)
-	err = client.CloseChannel(ctx, channel)
 	require.NoError(t, err)
 }

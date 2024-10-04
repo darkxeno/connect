@@ -159,27 +159,31 @@ type (
 		Channel    string `json:"channel"`
 	}
 	fileColumnProperties struct {
-		ColumnOrdinal int32 `json:"columnId"`
-		FieldID       int32 `json:"field_id"`
+		ColumnOrdinal int32  `json:"columnId"`
+		FieldID       *int32 `json:"field_id,omitempty"`
 		// current hex-encoded max value, truncated down to 32 bytes
-		MinStrValue *string `json:"minStrValue,omitempty"`
+		MinStrValue *string `json:"minStrValue"`
 		// current hex-encoded max value, truncated up to 32 bytes
-		MaxStrValue    *string  `json:"maxStrValue,omitempty"`
-		MinIntValue    *int64   `json:"minIntValue,omitempty"`
-		MaxIntValue    *int64   `json:"maxIntValue,omitempty"`
-		MinRealValue   *float64 `json:"minRealValue,omitempty"`
-		MaxRealValue   *float64 `json:"maxRealValue,omitempty"`
-		NullCount      int64    `json:"nullCount"`
-		DistinctValues int64    `json:"distinctValues"`
-		MaxLength      int64    `json:"maxLength"`
+		MaxStrValue    *string `json:"maxStrValue"`
+		MinIntValue    int64   `json:"minIntValue"`
+		MaxIntValue    int64   `json:"maxIntValue"`
+		MinRealValue   float64 `json:"minRealValue"`
+		MaxRealValue   float64 `json:"maxRealValue"`
+		NullCount      int64   `json:"nullCount"`
+		DistinctValues int64   `json:"distinctValues"`
+		MaxLength      int64   `json:"maxLength"`
 		// collated columns do not support ingestion
+		// they are always null
+		Collation         *string `json:"collation"`
+		MinStrNonCollated *string `json:"minStrNonCollated"`
+		MaxStrNonCollated *string `json:"maxStrNonCollated"`
 	}
 	epInfo struct {
 		Rows    int64                           `json:"rows"`
 		Columns map[string]fileColumnProperties `json:"columns"`
 	}
 	channelMetadata struct {
-		Channel          string  `json:"channel"`
+		Channel          string  `json:"channel_name"`
 		ClientSequencer  int64   `json:"client_sequencer"`
 		RowSequencer     int64   `json:"row_sequencer"`
 		StartOffsetToken *string `json:"start_offset_token"`
@@ -192,28 +196,34 @@ type (
 		Schema                  string            `json:"schema"`
 		Table                   string            `json:"table"`
 		ChunkStartOffset        int64             `json:"chunk_start_offset"`
+		ChunkLength             int32             `json:"chunk_length"`
 		ChunkLengthUncompressed int32             `json:"chunk_length_uncompressed"`
 		Channels                []channelMetadata `json:"channels"`
 		ChunkMD5                string            `json:"chunk_md5"`
-		EPS                     epInfo            `json:"eps"`
-		EncryptionKeyID         int64             `json:"encryption_key_id"`
-		MajorVersion            int32             `json:"major_vers"`
-		MinorVersion            int64             `json:"minor_vers"`
-		ExtendedMetadataSize    int64             `json:"ext_metadata_size"`
+		EPS                     *epInfo           `json:"eps,omitempty"`
+		EncryptionKeyID         int64             `json:"encryption_key_id,omitempty"`
+		FirstInsertTimeInMillis int64             `json:"first_insert_time_in_ms"`
+		LastInsertTimeInMillis  int64             `json:"last_insert_time_in_ms"`
+	}
+	blobStats struct {
+		FlushStartMs     int64 `json:"flush_start_ms"`
+		BuildDurationMs  int64 `json:"build_duration_ms"`
+		UploadDurationMs int64 `json:"upload_duration_ms"`
 	}
 	blobMetadata struct {
 		Path   string          `json:"path"`
 		MD5    string          `json:"md5"`
 		Chunks []chunkMetadata `json:"chunks"`
 		// Currently always 3
-		BDECVersion      int8 `json:"bdec_version"`
-		SpansMixedTables bool `json:"spans_mixed_tables"`
+		BDECVersion      int8      `json:"bdec_version"`
+		SpansMixedTables bool      `json:"spans_mixed_tables"`
+		BlobStats        blobStats `json:"blob_stats"`
 	}
 	registerBlobRequest struct {
 		RequestID string         `json:"request_id"`
 		Role      string         `json:"role"`
 		Blobs     []blobMetadata `json:"blobs"`
-		IsIceberg bool           `json:"is_iceberg,omitempty"`
+		IsIceberg bool           `json:"is_iceberg"`
 	}
 	channelRegisterStatus struct {
 		StatusCode      int64  `json:"status_code"`
@@ -335,12 +345,19 @@ func (c *restClient) OpenChannel(ctx context.Context, req openChannelRequest) (r
 	return
 }
 
+func (c *restClient) RegisterBlob(ctx context.Context, req registerBlobRequest) (resp registerBlobResponse, err error) {
+	requestID := uuid.NewString()
+	err = c.doPost(ctx, fmt.Sprintf("https://%s.snowflakecomputing.com/v1/streaming/channels/write/blobs?requestId=%s", c.account, requestID), req, &resp)
+	return
+}
+
 func (c *restClient) doPost(ctx context.Context, url string, req any, resp any) (err error) {
 	// TODO: Retries
-	b, err := json.Marshal(req)
+	b, err := json.MarshalIndent(req, "", "  ")
 	if err != nil {
 		return err
 	}
+	fmt.Printf("%s\n", b)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return fmt.Errorf("unable to make http request: %w", err)
@@ -366,6 +383,7 @@ func (c *restClient) doPost(ctx context.Context, url string, req any, resp any) 
 	if r.StatusCode != 200 {
 		return fmt.Errorf("non successful status code (%d): %s", r.StatusCode, b)
 	}
+	fmt.Printf("%s\n", b)
 	err = json.Unmarshal(b, resp)
 	if err != nil {
 		return fmt.Errorf("invalid response: %w, full response: %s", err, b[:min(128, len(b))])
