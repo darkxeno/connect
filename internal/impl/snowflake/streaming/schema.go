@@ -12,6 +12,7 @@ package streaming
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/parquet-go/parquet-go"
@@ -21,11 +22,8 @@ import (
 func constructParquetSchema(columns []columnMetadata) (*parquet.Schema, error) {
 	groupNode := parquet.Group{}
 
-	for i, column := range columns {
-		id := i + 1
-		if column.Ordinal != 0 {
-			id = int(column.Ordinal)
-		}
+	for _, column := range columns {
+		id := int(column.Ordinal)
 		var n parquet.Node
 		switch strings.ToLower(column.LogicalType) {
 		case "fixed":
@@ -46,12 +44,13 @@ func constructParquetSchema(columns []columnMetadata) (*parquet.Schema, error) {
 		default:
 			return nil, fmt.Errorf("unsupported logical column type: %s", column.LogicalType)
 		}
-		n = parquet.FieldID(n, id)
 		if column.Nullable {
 			n = parquet.Optional(n)
 		}
+		n = parquet.FieldID(n, id)
 		// TODO: Use the unquoted name
 		groupNode[column.Name] = n
 	}
+	parquet.PrintSchema(os.Stderr, "bdec", groupNode)
 	return parquet.NewSchema("bdec", groupNode), nil
 }

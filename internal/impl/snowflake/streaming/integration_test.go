@@ -44,7 +44,7 @@ func TestSnowflake(t *testing.T) {
 	})
 	require.NoError(t, err)
 	err = channel.InsertRows(ctx, []any{
-		map[string]any{"A": 76, "B": "qux", "C": false},
+		map[string]any{"A": 75, "B": "qux", "C": true},
 		//map[string]any{"A": 33, "B": "solid", "C": true},
 	})
 	require.NoError(t, err)

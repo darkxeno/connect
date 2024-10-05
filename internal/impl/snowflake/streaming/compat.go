@@ -19,6 +19,9 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"strconv"
+	"time"
 )
 
 func deriveKey(encryptionKey, diversifier string) ([]byte, error) {
@@ -62,4 +65,15 @@ func padBuffer(buf *bytes.Buffer, alignmentSize int) {
 func md5Hash(b []byte) string {
 	s := md5.Sum(b)
 	return hex.EncodeToString(s[:])
+}
+
+func generateBlobPath(clientPrefix string, threadID, counter int) string {
+	now := time.Now().UTC()
+	year := now.Year()
+	month := int(now.Month())
+	day := now.Day()
+	hour := now.Hour()
+	minute := now.Minute()
+	blobShortName := fmt.Sprintf("%s_%s_%d_%d.bdec", strconv.FormatInt(now.Unix(), 36), clientPrefix, threadID, counter)
+	return fmt.Sprintf("%d/%d/%d/%d/%d/%s", year, month, day, hour, minute, blobShortName)
 }

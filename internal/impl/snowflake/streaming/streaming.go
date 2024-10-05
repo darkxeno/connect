@@ -18,7 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
@@ -168,8 +168,7 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 	bucket := client.Bucket(bucketAndPath[0])
 	path := filepath.Join(
 		bucketAndPath[1],
-		startTime.UTC().Format("2006/01/02/15/04"),
-		fmt.Sprintf("%s_%s_34_0.bdec", strconv.FormatInt(startTime.Unix(), 36), c.clientPrefix),
+		generateBlobPath(c.clientPrefix, 32, 0),
 	)
 	buf := &bytes.Buffer{}
 	pw := parquet.NewGenericWriter[any](
@@ -263,24 +262,32 @@ func (c *SnowflakeIngestionChannel) InsertRows(ctx context.Context, rows []any) 
 }
 
 func computeColumnEpInfo(metadata format.FileMetaData) map[string]fileColumnProperties {
+	fmt.Printf("%#v\n", metadata.Schema)
 	info := map[string]fileColumnProperties{}
 	if len(metadata.RowGroups) != 1 {
 		panic("laksdjalkj")
 	}
 	for _, rowGroup := range metadata.RowGroups {
-		for columnIdx, column := range rowGroup.Columns {
-			schemaElement := metadata.Schema[columnIdx]
+		i := -1
+		for _, column := range rowGroup.Columns {
+			idx := slices.IndexFunc(metadata.Schema[i+1:], func(e format.SchemaElement) bool { return e.NumChildren == 0 })
+			if idx == -1 {
+				panic("oops")
+			}
+			i += idx + 1
+			schemaElement := metadata.Schema[i]
 			path := column.MetaData.PathInSchema
 			if len(path) != 1 {
 				panic(path)
 			}
 			name := path[0]
 			existing := info[name]
+			fmt.Printf("%#v\n", schemaElement)
 			existing.ColumnOrdinal = schemaElement.FieldID
 			existing.DistinctValues = -1
 			if name == "A" {
-				existing.MinIntValue = 76
-				existing.MaxIntValue = 76
+				existing.MinIntValue = 75
+				existing.MaxIntValue = 75
 			} else if name == "B" {
 				val := "717578"
 				existing.MinStrValue = &val
